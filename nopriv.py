@@ -689,6 +689,9 @@ def save_mail_attachments_to_folders(mail_id, mail, local_folder, folder):
         else:
             att_filename = re.sub(r'[^.a-zA-Z0-9 :;,\.\?]', "_", decoded_filename.replace(":", "").replace("/", "").replace("\\", ""))
 
+        if not att_filename:
+            att_filename = "_unnamed_" + str(mail_id)
+        
         if last_att_filename == att_filename:
             att_filename = str(att_count) + "." + att_filename
         
