@@ -15,29 +15,30 @@
 #     You should have received a copy of the GNU General Public License
 #     along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-import imaplib
+import ConfigParser
+import cgi
+import datetime
 import email
+import errno
+import fileinput
+import getpass
+import imaplib
 import mailbox
+import os
+import re
+import shutil
+import sys
+import time
 from email.header import decode_header
 from email.utils import parsedate
-import time
-import re
 from math import ceil
-from random import choice
-import os
-import base64
-import cgi
-import sys
-import shutil
-import errno
-import datetime
-import fileinput
-import ConfigParser
 from quopri import decodestring
-import getpass
+from random import choice
+
+# --- LOAD CONFIG ---
 
 # places where the config could be located
-config_file_paths = [ 
+config_file_paths = [
     './nopriv.ini',
     './.nopriv.ini',
     '~/.config/nopriv.ini',
@@ -46,70 +47,62 @@ config_file_paths = [
 ]
 
 config = ConfigParser.RawConfigParser()
-found = False
+
 for conf_file in config_file_paths:
     if os.path.isfile(conf_file):
         config.read(conf_file)
-        found = True
         break
-if found == False:
-    message = "No config file found. Expected places: %s" % \
-        ("\n".join(config_file_paths), )
-    raise Exception(message)
+else:
+    raise Exception("No config file found. Expected places: %s" % ("\n".join(config_file_paths),))
 
+
+# --- CONFIG PARSERS ---
+
+def _getconf(key, config, section, default, func):
+    try:
+        return func(config, section, key)
+    except ConfigParser.Error:
+        return default
+
+
+def getconf(key, default, config=config, section='nopriv'):
+    return _getconf(key, config, section, default, ConfigParser.RawConfigParser.get)
+
+
+def getconfbool(key, default=False, config=config, section='nopriv'):
+    return _getconf(key, config, section, default, ConfigParser.RawConfigParser.getboolean)
+
+
+def getconfint(key, default=0, config=config, section='nopriv'):
+    return _getconf(key, config, section, default, ConfigParser.RawConfigParser.getint)
+
+
+# --- PARSE CONFIG ---
 
 IMAPSERVER = config.get('nopriv', 'imap_server')
 IMAPLOGIN = config.get('nopriv', 'imap_user')
-IMAPPASSWORD = config.get('nopriv', 'imap_password')
+IMAPPASSWORD = config.get('nopriv', 'imap_password') or getpass.getpass()
 
-if IMAPPASSWORD == "":
-    IMAPPASSWORD = getpass.getpass()
+IMAPFOLDER_ORIG = filter(lambda s: s != "", map(str.strip, config.get('nopriv', 'imap_folder').split(',')))
 
-IMAPFOLDER_ORIG = [ folder.strip() for folder in \
-                     config.get('nopriv', 'imap_folder').split(',') \
-                     if folder.strip() != "" ]
+ssl = getconfbool('ssl', True)
+incremental_backup = getconfbool('incremental_backup', True)
+offline = getconfbool('offline', False)
+enable_html = getconfbool('enable_html', True)
+CreateMailDir = getconfbool('create_mail_dir', True)
 
-yes_flags = ['true', 1, '1', 'True', 'yes', 'y', 'on']
+messages_per_overview_page = getconfint('messages_per_overview_page', 50)
 
-ssl = False
-try: 
-    ssl_value = config.get('nopriv', 'ssl')
-    if ssl_value in yes_flags: 
-        ssl = True
-except:
-    pass
+inc_location = getconf('inc_location', 'inc')
+maildir = getconf('maildir', 'NoPrivMaildir')
 
-incremental_backup = False
-try:
-    incremental_value = config.get('nopriv', 'incremental_backup')
-    if incremental_value in yes_flags: 
-        incremental_backup = True
-except:
-    pass
 
-offline = False
-try:
-    offline_value = config.get('nopriv', 'offline')
-    if offline_value in yes_flags: 
-        offline = True
-except:
-    pass
-
-enable_html = True
-CreateMailDir = True
-messages_per_overview_page = 50
-
-inc_location = "inc"
+# --- TODO ---
 
 def connectToImapMailbox(IMAPSERVER, IMAPLOGIN, IMAPPASSWORD):
-    if ssl is True:
-        mail = imaplib.IMAP4_SSL(IMAPSERVER)
-    if ssl is False:
-        mail = imaplib.IMAP4(IMAPSERVER)
+    mail = imaplib.IMAP4_SSL(IMAPSERVER) if ssl else imaplib.IMAP4(IMAPSERVER)
     mail.login(IMAPLOGIN, IMAPPASSWORD)
     return mail
-
-maildir = 'NoPrivMaildir'
 
 def returnHeader(title, inclocation=inc_location):
     response = """
@@ -126,6 +119,7 @@ def returnHeader(title, inclocation=inc_location):
     """ % (title, inclocation)
     return response
 
+
 def returnFooter():
     response = """
                     </div>
@@ -138,33 +132,44 @@ def returnFooter():
     """
     return response
 
+
 lastfolder = ""
+
+
 def printQuote():
-    quotes = ['Come on, shut off that damn alarm and I promise I\'ll never violate you again.', 'I\'ve become romantically involved with a hologram. If that\'s possible.', 'Listen to me very carefully because I\'m only going to say this once. Coffee - black.', 'Computer, prepare to eject the warp core - authorization Torres omega five nine three!', 'The procedure is quite simple. I\'ll drill an opening into your skull percisely two milimeters in diameter and then use a neuralyte probe to extract a sample of your parietal lobe weighing approximately one gram']
+    quotes = ['Come on, shut off that damn alarm and I promise I\'ll never violate you again.',
+              'I\'ve become romantically involved with a hologram. If that\'s possible.',
+              'Listen to me very carefully because I\'m only going to say this once. Coffee - black.',
+              'Computer, prepare to eject the warp core - authorization Torres omega five nine three!',
+              'The procedure is quite simple. I\'ll drill an opening into your skull percisely two milimeters in diameter and then use a neuralyte probe to extract a sample of your parietal lobe weighing approximately one gram']
     return choice(quotes)
+
 
 class DecodeError(Exception):
     pass
 
+
 def decode_string(string):
-    for charset in ("utf-8", 'latin-1', 'iso-8859-1', 'us-ascii', 'windows-1252','us-ascii'):
+    for charset in ("utf-8", 'latin-1', 'iso-8859-1', 'us-ascii', 'windows-1252', 'us-ascii'):
         try:
             return cgi.escape(unicode(string, charset)).encode('ascii', 'xmlcharrefreplace')
         except Exception:
             continue
     raise DecodeError("Could not decode string")
 
+
 attCount = 0
 lastAttName = ""
 att_count = 0
 last_att_filename = ""
 
+
 def saveToMaildir(msg, mailFolder):
     global lastfolder
     global maildir
 
-    mbox = mailbox.Maildir(maildir, factory=mailbox.MaildirMessage, create=True) 
-    folder = mbox.add_folder(mailFolder)    
+    mbox = mailbox.Maildir(maildir, factory=mailbox.MaildirMessage, create=True)
+    folder = mbox.add_folder(mailFolder)
     folder.lock()
     try:
         message_key = folder.add(msg)
@@ -184,9 +189,10 @@ def saveToMaildir(msg, mailFolder):
         folder.close()
         mbox.close()
 
-def saveMostRecentMailID(mail_id, email_address, folder, filename = "nopriv.txt"):
+
+def saveMostRecentMailID(mail_id, email_address, folder, filename="nopriv.txt"):
     match = False
-    for line in fileinput.input(filename, inplace = 1): 
+    for line in fileinput.input(filename, inplace=1):
         if line.split(":")[0] == folder and line.split(":")[1] == email_address and len(line) > 3:
             line = folder + ":" + email_address + ":" + str(mail_id)
             match = True
@@ -196,11 +202,10 @@ def saveMostRecentMailID(mail_id, email_address, folder, filename = "nopriv.txt"
     if match == False:
         with open(os.path.join(filename), 'a') as progress_file:
             progress_file.write(folder + ":" + email_address + ":" + str(mail_id))
-            progress_file.close()    
+            progress_file.close()
 
 
-
-def getLastMailID(folder, email_address, filename = "nopriv.txt"):
+def getLastMailID(folder, email_address, filename="nopriv.txt"):
     if not os.path.exists(filename):
         with open(os.path.join(filename), 'w') as progress_file:
             progress_file.write(folder + ":" + email_address + ":1")
@@ -219,7 +224,7 @@ def getLastMailID(folder, email_address, filename = "nopriv.txt"):
         progress_file.close()
 
 
-def get_messages_to_local_maildir(mailFolder, mail, startid = 1):
+def get_messages_to_local_maildir(mailFolder, mail, startid=1):
     global IMAPLOGIN
     mail.select(mailFolder, readonly=True)
     try:
@@ -244,14 +249,13 @@ def get_messages_to_local_maildir(mailFolder, mail, startid = 1):
         startid = 1
 
     for message_id in range(int(startid), int(total_messages_in_mailbox + 1)):
-        result, data = mail.fetch(message_id , "(RFC822)")
+        result, data = mail.fetch(message_id, "(RFC822)")
         raw_email = data[0][1]
         print('Saving message %s.' % (message_id))
         maildir_folder = mailFolder.replace("/", ".")
         saveToMaildir(raw_email, maildir_folder)
         if incremental_backup == True:
             saveMostRecentMailID(message_id, IMAPLOGIN, mailFolder)
-        
 
 
 def returnIndexPage():
@@ -265,7 +269,7 @@ def returnIndexPage():
         indexFile.write(returnHeader("Email Backup Overview Page"))
         indexFile.write("<div class=\"col-md-3 col-md-offset-1\">\n")
         indexFile.write("<h3>Folders</h3>\n")
-        indexFile.write(returnMenu("", index=True, vertical = True, activeItem="index"))
+        indexFile.write(returnMenu("", index=True, vertical=True, activeItem="index"))
         indexFile.write("</div>\n")
         indexFile.write("<div class=\"col-md-8\">\n")
         indexFile.write("<h3>Information</h3>\n")
@@ -287,7 +291,8 @@ def returnIndexPage():
         if not offline:
             indexFile.write(returnImapFolders(available=True, selected=False, html=True))
         if ssl:
-            indexFile.write("And, you've got a good mail provider, they support SSL and your backup was made over SSL.<br />\n")
+            indexFile.write(
+                "And, you've got a good mail provider, they support SSL and your backup was made over SSL.<br />\n")
         else:
             indexFile.write("No encrption was used when getting the emails.<br />\n")
         indexFile.write("Thats all folks, have a nice day!</p>\n")
@@ -309,6 +314,7 @@ def allFolders(IMAPFOLDER_ORIG, mail):
     else:
         response = IMAPFOLDER_ORIG
     return response
+
 
 def returnImapFolders(available=True, selected=True, html=False):
     response = ""
@@ -336,7 +342,7 @@ def returnImapFolders(available=True, selected=True, html=False):
                 response += "- %s <br />\n" % sfo
             else:
                 response += "- %s \n" % sfo
-    if html:    
+    if html:
         response += "<br />\n"
     else:
         response += "\n"
@@ -344,7 +350,7 @@ def returnImapFolders(available=True, selected=True, html=False):
     return response
 
 
-def returnMenu(folderImIn, inDate = False, index = False, vertical = False, activeItem = ""):
+def returnMenu(folderImIn, inDate=False, index=False, vertical=False, activeItem=""):
     global IMAPFOLDER
 
     folder_number = folderImIn.split('/')
@@ -367,7 +373,6 @@ def returnMenu(folderImIn, inDate = False, index = False, vertical = False, acti
     else:
         response += "\t<li><a href=\"" + dotdotslash + "index.html\">Index</a></li>\n"
 
-
     for folder in IMAPFOLDER:
         if folder == activeItem:
             response += "\t<li class=\"active\"><a href=\"" + dotdotslash + folder + "/email-report-1.html\">" + folder + "</a></li>\n"
@@ -382,9 +387,11 @@ def returnMenu(folderImIn, inDate = False, index = False, vertical = False, acti
 
     return response
 
+
 def remove(src):
     if os.path.exists(src):
         shutil.rmtree(src)
+
 
 def copy(src, dst):
     try:
@@ -394,16 +401,20 @@ def copy(src, dst):
             shutil.copy(src, dst)
         elif exc.errno == errno.EEXIST:
             print("File %s already exists." % src)
-        else: raise
+        else:
+            raise
+
 
 def move(src, dst):
-        shutil.move(src, dst)
+    shutil.move(src, dst)
+
 
 def moveMailDir(maildir):
     print("Adding timestamp to Maildir.")
     now = datetime.datetime.now()
     maildirfilename = "Maildir." + str(now).replace("/", ".").replace(" ", ".").replace("-", ".").replace(":", ".")
     move(maildir, maildirfilename)
+
 
 def returnWelcome():
     print("##############################################")
@@ -421,7 +432,7 @@ def returnWelcome():
     print("")
 
 
-def createOverviewPage(folder, pagenumber, amountOfItems = 50):
+def createOverviewPage(folder, pagenumber, amountOfItems=50):
     if not os.path.exists(folder):
         os.makedirs(folder)
     overview_page_name = "email-report-" + str(pagenumber) + ".html"
@@ -443,12 +454,11 @@ def createOverviewPage(folder, pagenumber, amountOfItems = 50):
         overview_file.close()
 
 
-
-def addMailToOverviewPage(folder, pagenumber, mail_id, mail_from, 
-                          mail_to,  mail_subject, mail_date, 
-                          mail_from_encoding = "utf-8", mail_to_encoding = "utf-8",
-                          mail_subject_encoding = "utf-8", 
-                          attachment = False, emptyFolder = False):
+def addMailToOverviewPage(folder, pagenumber, mail_id, mail_from,
+                          mail_to, mail_subject, mail_date,
+                          mail_from_encoding="utf-8", mail_to_encoding="utf-8",
+                          mail_subject_encoding="utf-8",
+                          attachment=False, emptyFolder=False):
     try:
         mail_subject = cgi.escape(unicode(mail_subject, mail_subject_encoding)).encode('ascii', 'xmlcharrefreplace')
         mail_to = cgi.escape(unicode(mail_to, mail_to_encoding)).encode('ascii', 'xmlcharrefreplace')
@@ -487,6 +497,7 @@ def addMailToOverviewPage(folder, pagenumber, mail_id, mail_from,
         overview_file.write("</td>\n\t</tr>\n\t")
         overview_file.close()
 
+
 def finishOverviewPage(folder, pagenumber, previouspage, nextpage, total_messages_in_folder):
     overview_page_name = "email-report-" + str(pagenumber) + ".html"
     overview_file_path = os.path.join(folder, overview_page_name)
@@ -495,14 +506,16 @@ def finishOverviewPage(folder, pagenumber, previouspage, nextpage, total_message
         overview_file.write("\t<td></td>\n")
         overview_file.write("\t\t<td>")
         if previouspage:
-            overview_file.write("<a href = \"email-report-" + str(previouspage) + ".html\">Previous page (#" + str(previouspage) + ")</a>")
+            overview_file.write("<a href = \"email-report-" + str(previouspage) + ".html\">Previous page (#" + str(
+                previouspage) + ")</a>")
         else:
             overview_file.write("No previous page.")
         overview_file.write("</td>\n")
 
         overview_file.write("\t\t<td>")
         if nextpage:
-            overview_file.write("<a href = \"email-report-" + str(nextpage) + ".html\">Next page (#" + str(nextpage) + ")</a>")
+            overview_file.write(
+                "<a href = \"email-report-" + str(nextpage) + ".html\">Next page (#" + str(nextpage) + ")</a>")
         else:
             overview_file.write("No more pages.")
 
@@ -519,14 +532,12 @@ def finishOverviewPage(folder, pagenumber, previouspage, nextpage, total_message
         overview_file.close()
 
 
-
 def createMailPage(folder, mail_id, mail_for_page, current_page_number,
-                       mail_from, mail_to, mail_subject, mail_date,
-                       mail_has_attachment = False,
-                       mail_from_encoding = "utf-8", 
-                       mail_to_encoding = "utf-8",
-                       mail_subject_encoding = "utf-8"):
-
+                   mail_from, mail_to, mail_subject, mail_date,
+                   mail_has_attachment=False,
+                   mail_from_encoding="utf-8",
+                   mail_to_encoding="utf-8",
+                   mail_subject_encoding="utf-8"):
     mail = mail_for_page
 
     try:
@@ -540,7 +551,7 @@ def createMailPage(folder, mail_id, mail_for_page, current_page_number,
 
     mail_number = int(mail_id)
 
-    print(("Processing mail %s from %s with subject %s.") % ( mail_id, mail_from, mail_subject))
+    print(("Processing mail %s from %s with subject %s.") % (mail_id, mail_from, mail_subject))
 
     try:
         email_date = str(time.strftime("%d-%m-%Y %H:%m", email.utils.parsedate(mail_date)))
@@ -560,12 +571,14 @@ def createMailPage(folder, mail_id, mail_for_page, current_page_number,
             part_decoded_contents = part.get_payload(decode=True)
             try:
                 if part_charset[0]:
-                    content_of_mail['text'] += cgi.escape(unicode(str(part_decoded_contents), part_charset[0])).encode('ascii', 'xmlcharrefreplace')
+                    content_of_mail['text'] += cgi.escape(unicode(str(part_decoded_contents), part_charset[0])).encode(
+                        'ascii', 'xmlcharrefreplace')
                 else:
-                    content_of_mail['text'] += cgi.escape(str(part_decoded_contents)).encode('ascii', 'xmlcharrefreplace')
+                    content_of_mail['text'] += cgi.escape(str(part_decoded_contents)).encode('ascii',
+                                                                                             'xmlcharrefreplace')
             except Exception:
                 try:
-                    content_of_mail['text'] +=  decode_string(part_decoded_contents)
+                    content_of_mail['text'] += decode_string(part_decoded_contents)
                 except DecodeError:
                     content_of_mail['text'] += "Error decoding mail contents."
                     print("Error decoding mail contents")
@@ -574,7 +587,8 @@ def createMailPage(folder, mail_id, mail_for_page, current_page_number,
             part_decoded_contents = part.get_payload(decode=True)
             try:
                 if part_charset[0]:
-                    content_of_mail['html'] += unicode(str(part_decoded_contents), part_charset[0]).encode('ascii', 'xmlcharrefreplace')
+                    content_of_mail['html'] += unicode(str(part_decoded_contents), part_charset[0]).encode('ascii',
+                                                                                                           'xmlcharrefreplace')
                 else:
                     content_of_mail['html'] += str(part_decoded_contents).encode('ascii', 'xmlcharrefreplace')
             except Exception:
@@ -585,8 +599,6 @@ def createMailPage(folder, mail_id, mail_for_page, current_page_number,
                     print("Error decoding mail contents")
 
             continue
-
-
 
     has_attachments = mail_has_attachment
     folder_path_1 = os.path.join(folder, attachment_folder_date, str(mail_number))
@@ -620,35 +632,37 @@ def createMailPage(folder, mail_id, mail_for_page, current_page_number,
             mail_page.write("\t<tr>\n")
             mail_page.write("\t\t<td></td><td><a href=\"attachments\">Click here to open the attachments.</a> </td>\n")
             mail_page.write("\t<tr>\n")
-        mail_page.write("\t<tr><td><br /></td>\n\t\t<td><a href=\"javascript:history.go(-1)\">Go back</a></td>\n\t</tr>\n")
-        
+        mail_page.write(
+            "\t<tr><td><br /></td>\n\t\t<td><a href=\"javascript:history.go(-1)\">Go back</a></td>\n\t</tr>\n")
+
         mail_page.write("</table>\n")
 
         if content_of_mail['text']:
             mail_page.write("<pre>")
-            strip_header = re.sub(r"(?i)<html>.*?<head>.*?</head>.*?<body>", "", content_of_mail['text'], flags=re.DOTALL)
+            strip_header = re.sub(r"(?i)<html>.*?<head>.*?</head>.*?<body>", "", content_of_mail['text'],
+                                  flags=re.DOTALL)
             strip_header = re.sub(r"(?i)</body>.*?</html>", "", strip_header, flags=re.DOTALL)
             strip_header = re.sub(r"(?i)<!DOCTYPE.*?>", "", strip_header, flags=re.DOTALL)
             strip_header = re.sub(r"(?i)POSITION: absolute;", "", strip_header, flags=re.DOTALL)
             strip_header = re.sub(r"(?i)TOP: .*?;", "", strip_header, flags=re.DOTALL)
             mail_page.write(decodestring(strip_header))
             mail_page.write("</pre>\n")
-            
 
         if content_of_mail['html']:
-            strip_header = re.sub(r"(?i)<html>.*?<head>.*?</head>.*?<body>", "", content_of_mail['html'], flags=re.DOTALL)
+            strip_header = re.sub(r"(?i)<html>.*?<head>.*?</head>.*?<body>", "", content_of_mail['html'],
+                                  flags=re.DOTALL)
             strip_header = re.sub(r"(?i)</body>.*?</html>", "", strip_header, flags=re.DOTALL)
             strip_header = re.sub(r"(?i)<!DOCTYPE.*?>", "", strip_header, flags=re.DOTALL)
             strip_header = re.sub(r"(?i)POSITION: absolute;", "", strip_header, flags=re.DOTALL)
             strip_header = re.sub(r"(?i)TOP: .*?;", "", strip_header, flags=re.DOTALL)
             mail_page.write(decodestring(strip_header))
-        
+
         mail_page.write("<a href=\"javascript:history.go(-1)\">Go back</a>")
 
-        mail_page.close()        
+        mail_page.close()
+
 
 def save_mail_attachments_to_folders(mail_id, mail, local_folder, folder):
-
     global att_count
     global last_att_filename
     returnTrue = False
@@ -663,7 +677,7 @@ def save_mail_attachments_to_folders(mail_id, mail, local_folder, folder):
     else:
         remove(os.path.join(folder, att_date, str(mail_id), "attachments/"))
         os.makedirs(os.path.join(folder, att_date, str(mail_id), "attachments/"))
- 
+
     with open(os.path.join(folder, att_date, str(mail_id), "attachments/index.html"), "w") as att_index_file:
         att_index_file.write(returnHeader("Attachments for mail: " + str(mail_id) + ".", "../../../../inc"))
         att_index_file.write(returnMenu("../../../../../", activeItem=folder))
@@ -685,19 +699,20 @@ def save_mail_attachments_to_folders(mail_id, mail, local_folder, folder):
 
         if filename_header:
             filename_header = filename_header[0][0]
-            att_filename = re.sub(r'[^.a-zA-Z0-9 :;,\.\?]', "_", filename_header.replace(":", "").replace("/", "").replace("\\", ""))
+            att_filename = re.sub(r'[^.a-zA-Z0-9 :;,\.\?]', "_",
+                                  filename_header.replace(":", "").replace("/", "").replace("\\", ""))
         else:
-            att_filename = re.sub(r'[^.a-zA-Z0-9 :;,\.\?]', "_", decoded_filename.replace(":", "").replace("/", "").replace("\\", ""))
+            att_filename = re.sub(r'[^.a-zA-Z0-9 :;,\.\?]', "_",
+                                  decoded_filename.replace(":", "").replace("/", "").replace("\\", ""))
 
         if not att_filename:
             att_filename = "_unnamed_" + str(mail_id)
-        
+
         if last_att_filename == att_filename:
             att_filename = str(att_count) + "." + att_filename
-        
+
         last_att_filename = att_filename
         att_count += 1
-            
 
         att_path = os.path.join(folder, att_date, str(mail_id), "attachments", att_filename)
         att_dir = os.path.join(folder, att_date, str(mail_id), "attachments")
@@ -716,7 +731,7 @@ def save_mail_attachments_to_folders(mail_id, mail, local_folder, folder):
             att_dir_index.write("<li><a href=\"" + str(att_filename) + "\">" + str(att_filename) + "</a></li>\n")
             att_dir_index.close()
             returnTrue = True
-    
+
     with open(os.path.join(folder, att_date, str(mail_id), "attachments/index.html"), "a") as att_index_file:
         att_index_file.write("</ul>")
         att_index_file.write(returnFooter())
@@ -724,11 +739,13 @@ def save_mail_attachments_to_folders(mail_id, mail, local_folder, folder):
         if returnTrue:
             return True
         else:
-            return False          
+            return False
+
 
 def extract_date(email):
     date = email.get('Date')
     return parsedate(date)
+
 
 def return_sorted_email_list(maildir):
     sorted_mails = sorted(maildir, key=extract_date)
@@ -739,7 +756,7 @@ def return_sorted_email_list(maildir):
         number += 1
 
     return sorted_mail_list
-    
+
 
 def backup_mails_to_html_from_local_maildir(folder):
     global maildir
@@ -752,7 +769,8 @@ def backup_mails_to_html_from_local_maildir(folder):
     except mailbox.NoSuchMailboxError as e:
         print(("Error: Folder \"%s\" is probably empty or does not exists: %s.") % (folder, e))
         createOverviewPage(folder, 1, 0)
-        addMailToOverviewPage(folder, 1, 1, "-", "-", "Error: Folder/mailbox does not exist or is empty", "01-01-1900", emptyFolder = True)  
+        addMailToOverviewPage(folder, 1, 1, "-", "-", "Error: Folder/mailbox does not exist or is empty", "01-01-1900",
+                              emptyFolder=True)
         finishOverviewPage(folder, 1, 0, 0, 0)
         return None
 
@@ -765,7 +783,7 @@ def backup_mails_to_html_from_local_maildir(folder):
     except Exception as error:
         print(error)
         raise
-    
+
     sorted_maildir = return_sorted_email_list(maildir_folder)
     # We go through the mailbox in reverse
     start_mail_number = total_messages_in_folder
@@ -774,19 +792,19 @@ def backup_mails_to_html_from_local_maildir(folder):
     for number in reversed(range(number_of_overview_pages)):
         number += 1
         createOverviewPage(folder, number, messages_per_overview_page)
-        
+
     current_page_number = 1
 
     ## Add the mail subject, from, to and date to the overview page
     run = 1
     for number in reversed(range(start_mail_number)):
         if (current_page_number * messages_per_overview_page) == mail_number:
-            #if not current_page_number == 1:
+            # if not current_page_number == 1:
             current_page_number += 1
         if not run == 1:
             mail_number += 1
         run += 1
-        #key = maildir_folder.keys()[number]
+        # key = maildir_folder.keys()[number]
 
         mail = sorted_maildir[number]
         mail_for_page = sorted_maildir[number]
@@ -810,23 +828,22 @@ def backup_mails_to_html_from_local_maildir(folder):
             mail_to_encoding = "utf-8"
 
         mail_date = decode_header(mail.get('Date'))[0][0]
-        
-        addMailToOverviewPage(folder, current_page_number, mail_number, 
-                              mail_from, mail_to, mail_subject, mail_date, 
-                              mail_from_encoding = mail_from_encoding, 
-                              mail_to_encoding = mail_to_encoding,
-                              mail_subject_encoding = mail_subject_encoding,
-                            )  
+
+        addMailToOverviewPage(folder, current_page_number, mail_number,
+                              mail_from, mail_to, mail_subject, mail_date,
+                              mail_from_encoding=mail_from_encoding,
+                              mail_to_encoding=mail_to_encoding,
+                              mail_subject_encoding=mail_subject_encoding,
+                              )
 
         mail_has_attachment = save_mail_attachments_to_folders(mail_number, mail_for_page, folder, folder)
 
         createMailPage(folder, mail_number, mail_for_page, current_page_number,
-                       mail_from, mail_to, mail_subject, mail_date, 
+                       mail_from, mail_to, mail_subject, mail_date,
                        mail_has_attachment,
-                       mail_from_encoding = mail_from_encoding, 
-                       mail_to_encoding = mail_to_encoding,
-                       mail_subject_encoding = mail_subject_encoding)
-  
+                       mail_from_encoding=mail_from_encoding,
+                       mail_to_encoding=mail_to_encoding,
+                       mail_subject_encoding=mail_subject_encoding)
 
     ## Finish the overview page
     for number in reversed(range(number_of_overview_pages)):
@@ -838,8 +855,7 @@ def backup_mails_to_html_from_local_maildir(folder):
         elif number == number_of_overview_pages:
             finishOverviewPage(folder, number, (number - 1), 0, total_messages_in_folder)
         else:
-            finishOverviewPage(folder, number, (number - 1), (number + 1), total_messages_in_folder)    
-
+            finishOverviewPage(folder, number, (number - 1), (number + 1), total_messages_in_folder)
 
 
 returnWelcome()
@@ -848,16 +864,16 @@ if not offline:
     mail = connectToImapMailbox(IMAPSERVER, IMAPLOGIN, IMAPPASSWORD)
     IMAPFOLDER = allFolders(IMAPFOLDER_ORIG, mail)
     print(returnImapFolders())
-    
+
 returnIndexPage()
 
 if not offline:
-    for folder in IMAPFOLDER:    
+    for folder in IMAPFOLDER:
         print(("Getting messages from server from folder: %s.") % folder)
         retries = 0
         if ssl:
             try:
-                get_messages_to_local_maildir(folder, mail)    
+                get_messages_to_local_maildir(folder, mail)
             except imaplib.IMAP4_SSL.abort:
                 if retries < 5:
                     print(("SSL Connection Abort. Trying again (#%i).") % retries)
@@ -868,7 +884,7 @@ if not offline:
                     print("SSL Connection gave more than 5 errors. Not trying again")
         else:
             try:
-                get_messages_to_local_maildir(folder, mail)    
+                get_messages_to_local_maildir(folder, mail)
             except imaplib.IMAP4.abort:
                 if retries < 5:
                     print(("Connection Abort. Trying again (#%i).") % retries)
@@ -877,10 +893,9 @@ if not offline:
                     get_messages_to_local_maildir(folder, mail)
                 else:
                     print("Connection gave more than 5 errors. Not trying again")
-                
+
         print(("Done with folder: %s.") % folder)
         print("\n")
-
 
 for folder in IMAPFOLDER:
     print(("Processing folder: %s.") % folder)
@@ -888,7 +903,7 @@ for folder in IMAPFOLDER:
     copy(inc_location, folder + "/inc/")
     backup_mails_to_html_from_local_maildir(folder)
     print(("Done with folder: %s.") % folder)
-    print("\n")    
-        
+    print("\n")
+
 if not incremental_backup:
     moveMailDir(maildir)
