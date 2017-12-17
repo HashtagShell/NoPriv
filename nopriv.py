@@ -97,15 +97,16 @@ inc_location = getconf('inc_location', 'inc')
 maildir = getconf('maildir', 'NoPrivMaildir')
 
 
-# --- TODO ---
+# --- NETWORK ---
+
 
 def connectToImapMailbox(IMAPSERVER, IMAPLOGIN, IMAPPASSWORD):
     mail = imaplib.IMAP4_SSL(IMAPSERVER) if ssl else imaplib.IMAP4(IMAPSERVER)
     mail.login(IMAPLOGIN, IMAPPASSWORD)
     return mail
 
-def returnHeader(title, inclocation=inc_location):
-    response = """
+
+HTML_HEADER = """
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -116,33 +117,40 @@ def returnHeader(title, inclocation=inc_location):
 <body>
     <div class="row">
         <div class="col-md-12">
-    """ % (title, inclocation)
-    return response
+"""
+
+HTML_FOOTER = """
+            </div>
+        <div class="col-md-8 col-md-offset-1 footer">
+        <hr />
+        Email backup made by <a href="https://raymii.org/s/software/Nopriv.py.html">NoPriv.py from Raymii.org</a>
+        </div>
+    </body>
+</html>
+"""
+
+
+def returnHeader(title, inclocation=inc_location):
+    return HTML_HEADER % (title, inclocation)
 
 
 def returnFooter():
-    response = """
-                    </div>
-                <div class="col-md-8 col-md-offset-1 footer">
-                <hr />
-                Email backup made by <a href="https://raymii.org/s/software/Nopriv.py.html">NoPriv.py from Raymii.org</a>
-                </div>
-            </body>
-        </html>
-    """
-    return response
+    return HTML_FOOTER
 
 
 lastfolder = ""
 
-
-def printQuote():
-    quotes = ['Come on, shut off that damn alarm and I promise I\'ll never violate you again.',
+QUOTES = ['Come on, shut off that damn alarm and I promise I\'ll never violate you again.',
               'I\'ve become romantically involved with a hologram. If that\'s possible.',
               'Listen to me very carefully because I\'m only going to say this once. Coffee - black.',
               'Computer, prepare to eject the warp core - authorization Torres omega five nine three!',
-              'The procedure is quite simple. I\'ll drill an opening into your skull percisely two milimeters in diameter and then use a neuralyte probe to extract a sample of your parietal lobe weighing approximately one gram']
-    return choice(quotes)
+          'The procedure is quite simple. I\'ll drill an opening into your skull percisely two milimeters in '
+          + 'diameter and then use a neuralyte probe to extract a sample of your parietal lobe weighing '
+          + 'approximately one gram']
+
+
+def printQuote():
+    return choice(QUOTES)
 
 
 class DecodeError(Exception):
@@ -699,10 +707,10 @@ def save_mail_attachments_to_folders(mail_id, mail, local_folder, folder):
 
         if filename_header:
             filename_header = filename_header[0][0]
-            att_filename = re.sub(r'[^.a-zA-Z0-9 :;,\.\?]', "_",
+            att_filename = re.sub(r'[^.a-zA-Z0-9 :;,?]', "_",
                                   filename_header.replace(":", "").replace("/", "").replace("\\", ""))
         else:
-            att_filename = re.sub(r'[^.a-zA-Z0-9 :;,\.\?]', "_",
+            att_filename = re.sub(r'[^.a-zA-Z0-9 :;,?]', "_",
                                   decoded_filename.replace(":", "").replace("/", "").replace("\\", ""))
 
         if not att_filename:
