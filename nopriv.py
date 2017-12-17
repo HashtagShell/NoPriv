@@ -171,13 +171,13 @@ lastAttName = ""
 att_count = 0
 last_att_filename = ""
 
+mbox = mailbox.Maildir(maildir, factory=mailbox.MaildirMessage, create=True)
 
-def saveToMaildir(msg, mailFolder):
+
+def saveToMaildir(msg, folder):
     global lastfolder
-    global maildir
+    global mbox
 
-    mbox = mailbox.Maildir(maildir, factory=mailbox.MaildirMessage, create=True)
-    folder = mbox.add_folder(mailFolder)
     folder.lock()
     try:
         message_key = folder.add(msg)
@@ -255,13 +255,16 @@ def get_messages_to_local_maildir(mailFolder, mail, startid=1):
     if startid == 0:
         startid = 1
 
+    maildir_folder = mailFolder.replace("/", ".")
+    folder = mbox.add_folder(maildir_folder)
+
     for message_id in range(int(startid), int(total_messages_in_mailbox + 1)):
         result, data = mail.fetch(message_id, "(RFC822)")
         raw_email = data[0][1]
-        print('Saving message %s.' % (message_id))
-        maildir_folder = mailFolder.replace("/", ".")
-        saveToMaildir(raw_email, maildir_folder)
-        if incremental_backup == True:
+        print('Saving message %s.' % message_id)
+
+        saveToMaildir(raw_email, folder)
+        if incremental_backup:
             saveMostRecentMailID(message_id, IMAPLOGIN, mailFolder)
 
 
