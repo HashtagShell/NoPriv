@@ -229,7 +229,6 @@ def getLastMailID(folder, email_address, filename="nopriv.txt"):
                     progress_file.close()
                     return latest_mailid
         return 0
-        progress_file.close()
 
 
 def get_messages_to_local_maildir(mailFolder, mail, startid=1):
