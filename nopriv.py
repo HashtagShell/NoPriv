@@ -35,6 +35,25 @@ from math import ceil
 from quopri import decodestring
 from random import choice
 
+
+# --- HOOKS ---
+
+class Hook(object):
+    def __setattr__(self, key, value):
+        if callable(value):
+            super(Hook, self).__setattr__(key, value)
+        else:
+            raise TypeError("Cannot assign non-callable as hook attr")
+
+    def run(self):
+        for func in self.__dict__.itervalues():
+            func()
+
+
+class Hooks(object):
+    EXIT = Hook()
+
+
 # --- LOAD CONFIG ---
 
 # places where the config could be located
@@ -171,7 +190,11 @@ lastAttName = ""
 att_count = 0
 last_att_filename = ""
 
-mbox = mailbox.Maildir(maildir, factory=mailbox.MaildirMessage, create=True)
+try:
+    mbox = mailbox.Maildir(maildir, factory=mailbox.MaildirMessage, create=True)
+finally:
+    if mbox is not None:
+        Hooks.EXIT.mbox = lambda: mbox.close()
 
 
 def saveToMaildir(msg, folder):
@@ -868,52 +891,57 @@ def backup_mails_to_html_from_local_maildir(folder):
             finishOverviewPage(folder, number, (number - 1), (number + 1), total_messages_in_folder)
 
 
-returnWelcome()
+try:
 
-if not offline:
-    mail = connectToImapMailbox(IMAPSERVER, IMAPLOGIN, IMAPPASSWORD)
-    IMAPFOLDER = allFolders(IMAPFOLDER_ORIG, mail)
-    print(returnImapFolders())
+    returnWelcome()
 
-returnIndexPage()
+    if not offline:
+        mail = connectToImapMailbox(IMAPSERVER, IMAPLOGIN, IMAPPASSWORD)
+        IMAPFOLDER = allFolders(IMAPFOLDER_ORIG, mail)
+        print(returnImapFolders())
 
-if not offline:
+    returnIndexPage()
+
+    if not offline:
+        for folder in IMAPFOLDER:
+            print(("Getting messages from server from folder: %s.") % folder)
+            retries = 0
+            if ssl:
+                try:
+                    get_messages_to_local_maildir(folder, mail)
+                except imaplib.IMAP4_SSL.abort:
+                    if retries < 5:
+                        print(("SSL Connection Abort. Trying again (#%i).") % retries)
+                        retries += 1
+                        mail = connectToImapMailbox(IMAPSERVER, IMAPLOGIN, IMAPPASSWORD)
+                        get_messages_to_local_maildir(folder, mail)
+                    else:
+                        print("SSL Connection gave more than 5 errors. Not trying again")
+            else:
+                try:
+                    get_messages_to_local_maildir(folder, mail)
+                except imaplib.IMAP4.abort:
+                    if retries < 5:
+                        print(("Connection Abort. Trying again (#%i).") % retries)
+                        retries += 1
+                        mail = connectToImapMailbox(IMAPSERVER, IMAPLOGIN, IMAPPASSWORD)
+                        get_messages_to_local_maildir(folder, mail)
+                    else:
+                        print("Connection gave more than 5 errors. Not trying again")
+
+            print(("Done with folder: %s.") % folder)
+            print("\n")
+
     for folder in IMAPFOLDER:
-        print(("Getting messages from server from folder: %s.") % folder)
-        retries = 0
-        if ssl:
-            try:
-                get_messages_to_local_maildir(folder, mail)
-            except imaplib.IMAP4_SSL.abort:
-                if retries < 5:
-                    print(("SSL Connection Abort. Trying again (#%i).") % retries)
-                    retries += 1
-                    mail = connectToImapMailbox(IMAPSERVER, IMAPLOGIN, IMAPPASSWORD)
-                    get_messages_to_local_maildir(folder, mail)
-                else:
-                    print("SSL Connection gave more than 5 errors. Not trying again")
-        else:
-            try:
-                get_messages_to_local_maildir(folder, mail)
-            except imaplib.IMAP4.abort:
-                if retries < 5:
-                    print(("Connection Abort. Trying again (#%i).") % retries)
-                    retries += 1
-                    mail = connectToImapMailbox(IMAPSERVER, IMAPLOGIN, IMAPPASSWORD)
-                    get_messages_to_local_maildir(folder, mail)
-                else:
-                    print("Connection gave more than 5 errors. Not trying again")
-
+        print(("Processing folder: %s.") % folder)
+        remove(folder + "/inc")
+        copy(inc_location, folder + "/inc/")
+        backup_mails_to_html_from_local_maildir(folder)
         print(("Done with folder: %s.") % folder)
         print("\n")
 
-for folder in IMAPFOLDER:
-    print(("Processing folder: %s.") % folder)
-    remove(folder + "/inc")
-    copy(inc_location, folder + "/inc/")
-    backup_mails_to_html_from_local_maildir(folder)
-    print(("Done with folder: %s.") % folder)
-    print("\n")
+    if not incremental_backup:
+        moveMailDir(maildir)
 
-if not incremental_backup:
-    moveMailDir(maildir)
+finally:
+    Hooks.EXIT.run()
