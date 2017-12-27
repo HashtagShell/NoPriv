@@ -157,12 +157,10 @@ def returnFooter():
     return HTML_FOOTER
 
 
-lastfolder = ""
-
 QUOTES = ['Come on, shut off that damn alarm and I promise I\'ll never violate you again.',
-              'I\'ve become romantically involved with a hologram. If that\'s possible.',
-              'Listen to me very carefully because I\'m only going to say this once. Coffee - black.',
-              'Computer, prepare to eject the warp core - authorization Torres omega five nine three!',
+          'I\'ve become romantically involved with a hologram. If that\'s possible.',
+          'Listen to me very carefully because I\'m only going to say this once. Coffee - black.',
+          'Computer, prepare to eject the warp core - authorization Torres omega five nine three!',
           'The procedure is quite simple. I\'ll drill an opening into your skull percisely two milimeters in '
           + 'diameter and then use a neuralyte probe to extract a sample of your parietal lobe weighing '
           + 'approximately one gram']
@@ -196,6 +194,8 @@ finally:
     if mbox is not None:
         Hooks.EXIT.mbox = lambda: mbox.close()
 
+lastfolder = ""
+
 
 def saveToMaildir(msg, folder):
     global lastfolder
@@ -209,16 +209,14 @@ def saveToMaildir(msg, folder):
         maildir_message = folder.get_message(message_key)
         try:
             message_date_epoch = time.mktime(parsedate(decode_header(maildir_message.get("Date"))[0][0]))
-        except TypeError as typeerror:
-            message_date_epoch = time.mktime([2000, 1, 1, 1, 1, 1, 1, 1, 0])
+        except TypeError:
+            message_date_epoch = 0.0
         maildir_message.set_date(message_date_epoch)
         maildir_message.add_flag("s")
-
 
     finally:
         folder.unlock()
         folder.close()
-        mbox.close()
 
 
 def saveMostRecentMailID(mail_id, email_address, folder, filename="nopriv.txt"):
@@ -230,7 +228,7 @@ def saveMostRecentMailID(mail_id, email_address, folder, filename="nopriv.txt"):
         if len(line) > 3 and line != "\n":
             print(line)
     fileinput.close()
-    if match == False:
+    if not match:
         with open(os.path.join(filename), 'a') as progress_file:
             progress_file.write(folder + ":" + email_address + ":" + str(mail_id))
             progress_file.close()
@@ -584,18 +582,19 @@ def createMailPage(folder, mail_id, mail_for_page, current_page_number,
 
     mail_number = int(mail_id)
 
-    print(("Processing mail %s from %s with subject %s.") % (mail_id, mail_from, mail_subject))
+    print("Processing mail %s from %s with subject %s." % (mail_id, mail_from, mail_subject))
 
     try:
-        email_date = str(time.strftime("%d-%m-%Y %H:%m", email.utils.parsedate(mail_date)))
+        # email_date = str(time.strftime("%d-%m-%Y %H:%m", email.utils.parsedate(mail_date)))
         attachment_folder_date = str(time.strftime("%Y/%m/", email.utils.parsedate(mail_date)))
     except TypeError:
-        email_date = "Error in Date"
-        attachment_folder_date = str("2000/1/")
+        # email_date = "Error in Date"
+        attachment_folder_date = str("1970/1/")
 
-    content_of_mail = {}
-    content_of_mail['text'] = ""
-    content_of_mail['html'] = ""
+    content_of_mail = {
+        'text': "",
+        'html': ""
+    }
 
     for part in mail.walk():
         part_content_type = part.get_content_type()
@@ -721,7 +720,7 @@ def save_mail_attachments_to_folders(mail_id, mail, local_folder, folder):
     for part in mail.walk():
         if part.get_content_maintype() == 'multipart':
             continue
-        if part.get('Content-Disposition') == None:
+        if part.get('Content-Disposition') is None:
             continue
         decoded_filename = part.get_filename()
         filename_header = None
@@ -800,7 +799,7 @@ def backup_mails_to_html_from_local_maildir(folder):
     try:
         maildir_folder = local_maildir.get_folder(local_maildir_folder)
     except mailbox.NoSuchMailboxError as e:
-        print(("Error: Folder \"%s\" is probably empty or does not exists: %s.") % (folder, e))
+        print("Error: Folder \"%s\" is probably empty or does not exists: %s." % (folder, e))
         createOverviewPage(folder, 1, 0)
         addMailToOverviewPage(folder, 1, 1, "-", "-", "Error: Folder/mailbox does not exist or is empty", "01-01-1900",
                               emptyFolder=True)
@@ -809,7 +808,7 @@ def backup_mails_to_html_from_local_maildir(folder):
 
     ## Start with the first email
     mail_number = 1
-    total_messages_in_folder = maildir_folder.__len__()
+    total_messages_in_folder = len(maildir_folder)
     try:
         number_of_overview_pages = float(total_messages_in_folder) / float(messages_per_overview_page)
         number_of_overview_pages = int(ceil(number_of_overview_pages))
@@ -904,14 +903,14 @@ try:
 
     if not offline:
         for folder in IMAPFOLDER:
-            print(("Getting messages from server from folder: %s.") % folder)
+            print("Getting messages from server from folder: %s." % folder)
             retries = 0
             if ssl:
                 try:
                     get_messages_to_local_maildir(folder, mail)
                 except imaplib.IMAP4_SSL.abort:
                     if retries < 5:
-                        print(("SSL Connection Abort. Trying again (#%i).") % retries)
+                        print("SSL Connection Abort. Trying again (#%i)." % retries)
                         retries += 1
                         mail = connectToImapMailbox(IMAPSERVER, IMAPLOGIN, IMAPPASSWORD)
                         get_messages_to_local_maildir(folder, mail)
@@ -922,22 +921,22 @@ try:
                     get_messages_to_local_maildir(folder, mail)
                 except imaplib.IMAP4.abort:
                     if retries < 5:
-                        print(("Connection Abort. Trying again (#%i).") % retries)
+                        print("Connection Abort. Trying again (#%i)." % retries)
                         retries += 1
                         mail = connectToImapMailbox(IMAPSERVER, IMAPLOGIN, IMAPPASSWORD)
                         get_messages_to_local_maildir(folder, mail)
                     else:
                         print("Connection gave more than 5 errors. Not trying again")
 
-            print(("Done with folder: %s.") % folder)
+            print("Done with folder: %s." % folder)
             print("\n")
 
     for folder in IMAPFOLDER:
-        print(("Processing folder: %s.") % folder)
+        print("Processing folder: %s." % folder)
         remove(folder + "/inc")
         copy(inc_location, folder + "/inc/")
         backup_mails_to_html_from_local_maildir(folder)
-        print(("Done with folder: %s.") % folder)
+        print("Done with folder: %s." % folder)
         print("\n")
 
     if not incremental_backup:
