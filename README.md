@@ -126,9 +126,7 @@ If you only have a console, it works just fine in Links2 (see above screenshot):
 
 ### Requirements
 
-Python 2.7
-
-Running debian 6 which has python 2.6.6? [See here how to install python 2.7 on debian 6.](https://raymii.org/s/tutorials/Install_Python_2.7_or_3_on_debian_6.html)
+Python 3.5
 
 ### Known issues
 

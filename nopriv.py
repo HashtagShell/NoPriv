@@ -15,13 +15,13 @@
 #     You should have received a copy of the GNU General Public License
 #     along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-import ConfigParser
-import cgi
+import configparser
 import datetime
 import email
 import errno
 import fileinput
 import getpass
+import html
 import imaplib
 import mailbox
 import os
@@ -49,7 +49,7 @@ class Hook(object):
         self.run()
 
     def run(self):
-        for func in self.__dict__.itervalues():
+        for func in self.__dict__.values():
             func()
 
 
@@ -62,7 +62,7 @@ class Hooks(object):
 # places where the config could be located
 CONFIG_FILE = './nopriv.ini'
 
-config = ConfigParser.RawConfigParser()
+config = configparser.RawConfigParser()
 
 if os.path.isfile(CONFIG_FILE):
     config.read(CONFIG_FILE)
@@ -75,20 +75,20 @@ else:
 def _getconf(key, section, default, func):
     try:
         return func(config, section, key)
-    except ConfigParser.Error:
+    except configparser.Error:
         return default
 
 
 def getconf(key, default, section='nopriv'):
-    return _getconf(key, section, default, ConfigParser.RawConfigParser.get)
+    return _getconf(key, section, default, configparser.RawConfigParser.get)
 
 
 def getconfbool(key, default=False, section='nopriv'):
-    return _getconf(key, section, default, ConfigParser.RawConfigParser.getboolean)
+    return _getconf(key, section, default, configparser.RawConfigParser.getboolean)
 
 
 def getconfint(key, default=0, section='nopriv'):
-    return _getconf(key, section, default, ConfigParser.RawConfigParser.getint)
+    return _getconf(key, section, default, configparser.RawConfigParser.getint)
 
 
 # --- PARSE CONFIG ---
@@ -97,7 +97,7 @@ IMAPSERVER = config.get('nopriv', 'imap_server')
 IMAPLOGIN = config.get('nopriv', 'imap_user')
 IMAPPASSWORD = config.get('nopriv', 'imap_password') or getpass.getpass()
 
-IMAPFOLDER_ORIG = filter(lambda s: s != "", map(str.strip, config.get('nopriv', 'imap_folder').split(',')))
+IMAPFOLDER_ORIG = [s for s in [str.strip(s) for s in config.get('nopriv', 'imap_folder').split(',')] if s != ""]
 
 SSL = getconfbool('ssl', True)
 incremental_backup = getconfbool('incremental_backup', True)
@@ -185,7 +185,7 @@ class DecodeError(Exception):
 def decode_string(string):
     for charset in ("utf-8", 'latin-1', 'iso-8859-1', 'us-ascii', 'windows-1252', 'us-ascii'):
         try:
-            return cgi.escape(unicode(string, charset)).encode('ascii', 'xmlcharrefreplace')
+            return html.escape(str(string, charset)).encode('ascii', 'xmlcharrefreplace')
         except Exception:
             continue
     raise DecodeError("Could not decode string")
@@ -499,9 +499,9 @@ def addMailToOverviewPage(folder, pagenumber, mail_id, mail_from,
                           mail_subject_encoding="utf-8",
                           attachment=False, emptyFolder=False):
     try:
-        mail_subject = cgi.escape(unicode(mail_subject, mail_subject_encoding)).encode('ascii', 'xmlcharrefreplace')
-        mail_to = cgi.escape(unicode(mail_to, mail_to_encoding)).encode('ascii', 'xmlcharrefreplace')
-        mail_from = cgi.escape(unicode(mail_from, mail_from_encoding)).encode('ascii', 'xmlcharrefreplace')
+        mail_subject = html.escape(str(mail_subject, mail_subject_encoding)).encode('ascii', 'xmlcharrefreplace')
+        mail_to = html.escape(str(mail_to, mail_to_encoding)).encode('ascii', 'xmlcharrefreplace')
+        mail_from = html.escape(str(mail_from, mail_from_encoding)).encode('ascii', 'xmlcharrefreplace')
     except Exception:
         mail_subject = decode_string(mail_subject)
         mail_to = decode_string(mail_to)
@@ -580,9 +580,9 @@ def createMailPage(folder, mail_id, mail_for_page, current_page_number,
     mail = mail_for_page
 
     try:
-        mail_subject = cgi.escape(unicode(mail_subject, mail_subject_encoding)).encode('ascii', 'xmlcharrefreplace')
-        mail_to = cgi.escape(unicode(mail_to, mail_to_encoding)).encode('ascii', 'xmlcharrefreplace')
-        mail_from = cgi.escape(unicode(mail_from, mail_from_encoding)).encode('ascii', 'xmlcharrefreplace')
+        mail_subject = html.escape(str(mail_subject, mail_subject_encoding)).encode('ascii', 'xmlcharrefreplace')
+        mail_to = html.escape(str(mail_to, mail_to_encoding)).encode('ascii', 'xmlcharrefreplace')
+        mail_from = html.escape(str(mail_from, mail_from_encoding)).encode('ascii', 'xmlcharrefreplace')
     except Exception:
         mail_subject = decode_string(mail_subject)
         mail_to = decode_string(mail_to)
@@ -611,11 +611,11 @@ def createMailPage(folder, mail_id, mail_for_page, current_page_number,
             part_decoded_contents = part.get_payload(decode=True)
             try:
                 if part_charset[0]:
-                    content_of_mail['text'] += cgi.escape(unicode(str(part_decoded_contents), part_charset[0])).encode(
+                    content_of_mail['text'] += html.escape((str(part_decoded_contents, part_charset[0]))).encode(
                         'ascii', 'xmlcharrefreplace')
                 else:
-                    content_of_mail['text'] += cgi.escape(str(part_decoded_contents)).encode('ascii',
-                                                                                             'xmlcharrefreplace')
+                    content_of_mail['text'] += html.escape(str(part_decoded_contents)).encode('ascii',
+                                                                                              'xmlcharrefreplace')
             except Exception:
                 try:
                     content_of_mail['text'] += decode_string(part_decoded_contents)
@@ -627,8 +627,8 @@ def createMailPage(folder, mail_id, mail_for_page, current_page_number,
             part_decoded_contents = part.get_payload(decode=True)
             try:
                 if part_charset[0]:
-                    content_of_mail['html'] += unicode(str(part_decoded_contents), part_charset[0]).encode('ascii',
-                                                                                                           'xmlcharrefreplace')
+                    content_of_mail['html'] += str(part_decoded_contents, part_charset[0]).encode('ascii',
+                                                                                                  'xmlcharrefreplace')
                 else:
                     content_of_mail['html'] += str(part_decoded_contents).encode('ascii', 'xmlcharrefreplace')
             except Exception:
@@ -762,7 +762,7 @@ def save_mail_attachments_to_folders(mail_id, mail, local_folder, folder):
             try:
                 att_file.write(part.get_payload(decode=True))
             except Exception as e:
-                att_file.write("Error writing attachment: " + str(e) + ".\n")
+                att_file.write(b"Error writing attachment: " + str(e).encode() + b".\n")
                 print("Error writing attachment: " + str(e) + ".\n")
                 return False
             att_file.close()
