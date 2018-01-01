@@ -45,6 +45,9 @@ class Hook(object):
         else:
             raise TypeError("Cannot assign non-callable as hook attr")
 
+    def __call__(self, *args, **kwargs):
+        self.run()
+
     def run(self):
         for func in self.__dict__.itervalues():
             func()
@@ -943,4 +946,4 @@ try:
         moveMailDir(maildir)
 
 finally:
-    Hooks.EXIT.run()
+    Hooks.EXIT()
