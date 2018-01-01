@@ -72,23 +72,23 @@ else:
 
 # --- CONFIG PARSERS ---
 
-def _getconf(key, config, section, default, func):
+def _getconf(key, section, default, func):
     try:
         return func(config, section, key)
     except ConfigParser.Error:
         return default
 
 
-def getconf(key, default, config=config, section='nopriv'):
-    return _getconf(key, config, section, default, ConfigParser.RawConfigParser.get)
+def getconf(key, default, section='nopriv'):
+    return _getconf(key, section, default, ConfigParser.RawConfigParser.get)
 
 
-def getconfbool(key, default=False, config=config, section='nopriv'):
-    return _getconf(key, config, section, default, ConfigParser.RawConfigParser.getboolean)
+def getconfbool(key, default=False, section='nopriv'):
+    return _getconf(key, section, default, ConfigParser.RawConfigParser.getboolean)
 
 
-def getconfint(key, default=0, config=config, section='nopriv'):
-    return _getconf(key, config, section, default, ConfigParser.RawConfigParser.getint)
+def getconfint(key, default=0, section='nopriv'):
+    return _getconf(key, section, default, ConfigParser.RawConfigParser.getint)
 
 
 # --- PARSE CONFIG ---
@@ -99,7 +99,7 @@ IMAPPASSWORD = config.get('nopriv', 'imap_password') or getpass.getpass()
 
 IMAPFOLDER_ORIG = filter(lambda s: s != "", map(str.strip, config.get('nopriv', 'imap_folder').split(',')))
 
-ssl = getconfbool('ssl', True)
+SSL = getconfbool('ssl', True)
 incremental_backup = getconfbool('incremental_backup', True)
 offline = getconfbool('offline', False)
 enable_html = getconfbool('enable_html', True)
@@ -113,11 +113,24 @@ maildir = getconf('maildir', 'NoPrivMaildir')
 
 # --- NETWORK ---
 
+mail = None
 
-def connectToImapMailbox(IMAPSERVER, IMAPLOGIN, IMAPPASSWORD):
-    mail = imaplib.IMAP4_SSL(IMAPSERVER) if ssl else imaplib.IMAP4(IMAPSERVER)
-    mail.login(IMAPLOGIN, IMAPPASSWORD)
-    return mail
+
+def openImapConnection(server=IMAPSERVER, login=IMAPLOGIN, password=IMAPPASSWORD, ssl=SSL):
+    global mail
+    closeImapConnection()  # close if open
+    mail = (imaplib.IMAP4_SSL if ssl else imaplib.IMAP4)(server)
+    mail.login(login, password)
+
+
+def closeImapConnection():
+    global mail
+    if mail is not None:
+        mail.close()
+        mail = None
+
+
+Hooks.EXIT.imapConnection = closeImapConnection
 
 
 HTML_HEADER = """
@@ -288,7 +301,7 @@ def returnIndexPage():
     global IMAPFOLDER
     global IMAPLOGIN
     global IMAPSERVER
-    global ssl
+    global SSL
     global offline
     now = datetime.datetime.now()
     with open("index.html", "w") as indexFile:
@@ -316,7 +329,7 @@ def returnIndexPage():
         indexFile.write("<br />Available Folders:<br />")
         if not offline:
             indexFile.write(returnImapFolders(available=True, selected=False, html=True))
-        if ssl:
+        if SSL:
             indexFile.write(
                 "And, you've got a good mail provider, they support SSL and your backup was made over SSL.<br />\n")
         else:
@@ -890,7 +903,7 @@ try:
     returnWelcome()
 
     if not offline:
-        mail = connectToImapMailbox(IMAPSERVER, IMAPLOGIN, IMAPPASSWORD)
+        openImapConnection()
         IMAPFOLDER = allFolders(IMAPFOLDER_ORIG, mail)
         print(returnImapFolders())
 
@@ -900,14 +913,14 @@ try:
         for folder in IMAPFOLDER:
             print("Getting messages from server from folder: %s." % folder)
             retries = 0
-            if ssl:
+            if SSL:
                 try:
                     get_messages_to_local_maildir(folder, mail)
                 except imaplib.IMAP4_SSL.abort:
                     if retries < 5:
                         print("SSL Connection Abort. Trying again (#%i)." % retries)
                         retries += 1
-                        mail = connectToImapMailbox(IMAPSERVER, IMAPLOGIN, IMAPPASSWORD)
+                        openImapConnection()
                         get_messages_to_local_maildir(folder, mail)
                     else:
                         print("SSL Connection gave more than 5 errors. Not trying again")
@@ -918,7 +931,7 @@ try:
                     if retries < 5:
                         print("Connection Abort. Trying again (#%i)." % retries)
                         retries += 1
-                        mail = connectToImapMailbox(IMAPSERVER, IMAPLOGIN, IMAPPASSWORD)
+                        openImapConnection()
                         get_messages_to_local_maildir(folder, mail)
                     else:
                         print("Connection gave more than 5 errors. Not trying again")
