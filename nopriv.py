@@ -60,22 +60,14 @@ class Hooks(object):
 # --- LOAD CONFIG ---
 
 # places where the config could be located
-config_file_paths = [
-    './nopriv.ini',
-    './.nopriv.ini',
-    '~/.config/nopriv.ini',
-    '/opt/local/etc/nopriv.ini',
-    '/etc/nopriv.ini'
-]
+CONFIG_FILE = './nopriv.ini'
 
 config = ConfigParser.RawConfigParser()
 
-for conf_file in config_file_paths:
-    if os.path.isfile(conf_file):
-        config.read(conf_file)
-        break
+if os.path.isfile(CONFIG_FILE):
+    config.read(CONFIG_FILE)
 else:
-    raise Exception("No config file found. Expected places: %s" % ("\n".join(config_file_paths),))
+    raise Exception("No config file found. Expected place: %s" % CONFIG_FILE)
 
 
 # --- CONFIG PARSERS ---
